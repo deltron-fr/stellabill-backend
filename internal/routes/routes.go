@@ -2,11 +2,16 @@ package routes
 
 import (
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/audit"
+	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
 )
 
-func Register(r *gin.Engine) {
+func Register(r *gin.Engine, cfg config.Config, auditLogger *audit.Logger) {
 	r.Use(corsMiddleware())
+	r.Use(audit.Middleware(auditLogger))
+
+	adminHandler := handlers.NewAdminHandler(cfg.AdminToken)
 
 	api := r.Group("/api")
 	{
@@ -14,6 +19,11 @@ func Register(r *gin.Engine) {
 		api.GET("/subscriptions", handlers.ListSubscriptions)
 		api.GET("/subscriptions/:id", handlers.GetSubscription)
 		api.GET("/plans", handlers.ListPlans)
+
+		admin := api.Group("/admin")
+		{
+			admin.POST("/purge", adminHandler.PurgeCache)
+		}
 	}
 }
 

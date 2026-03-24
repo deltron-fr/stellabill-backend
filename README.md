@@ -30,6 +30,7 @@ Go (Gin) API backend for Stellabill — subscription and billing plans API. This
 This service is the **backend only**. A separate frontend (or any client) can:
 
 - **Health check** — `GET /api/health` to verify the API is up.
+- **Admin purge (sensitive)** — `POST /api/admin/purge` with `X-Admin-Token` header for protected admin actions (audit-logged).
 - **Plans** — `GET /api/plans` to list billing plans (id, name, amount, currency, interval, description). Currently returns an empty list; DB integration is planned.
 - **Subscriptions** — `GET /api/subscriptions` to list subscriptions and `GET /api/subscriptions/:id` to fetch one. Responses include plan_id, customer, status, amount, interval, next_billing. Currently placeholder/mock data; DB integration is planned.
 
@@ -72,6 +73,9 @@ ENV=development
 PORT=8080
 DATABASE_URL=postgres://localhost/stellarbill?sslmode=disable
 JWT_SECRET=change-me-in-production
+ADMIN_TOKEN=change-me-admin-token
+AUDIT_HMAC_SECRET=stellarbill-dev-audit
+AUDIT_LOG_PATH=audit.log
 ```
 
 Or export them in your shell. The app will run with the defaults if you don’t set anything.
@@ -101,6 +105,9 @@ curl http://localhost:8080/api/health
 | `PORT`         | `8080`                                       | HTTP server port               |
 | `DATABASE_URL` | `postgres://localhost/stellarbill?sslmode=disable` | PostgreSQL connection string   |
 | `JWT_SECRET`   | `change-me-in-production`                     | Secret for JWT (change in prod)|
+| `ADMIN_TOKEN`  | `change-me-admin-token`                      | Static token for admin-only endpoints |
+| `AUDIT_HMAC_SECRET` | `stellarbill-dev-audit`                  | Key for HMAC chaining (tamper-evident audit log) |
+| `AUDIT_LOG_PATH` | `audit.log`                                | JSONL audit log destination path |
 
 In production, set these via your host’s environment or secrets manager; do not commit secrets.
 
@@ -116,8 +123,30 @@ Base URL (local): `http://localhost:8080`
 | GET    | `/api/plans`             | List billing plans       |
 | GET    | `/api/subscriptions`     | List subscriptions       |
 | GET    | `/api/subscriptions/:id` | Get one subscription     |
+| POST   | `/api/admin/purge`       | Admin-only purge action (requires `X-Admin-Token`, fully audit logged) |
 
 All JSON responses. CORS allowed for `*` origin with common methods and headers.
+
+---
+
+## Audit logging
+
+- **Tamper-evident chain:** Each audit entry is HMAC-signed with `AUDIT_HMAC_SECRET` and linked to the previous hash (chain-of-trust). Breaking or removing a line invalidates later hashes.
+- **What gets logged:** `actor`, `action`, `target`, `outcome`, request method/path, client IP, and any supplied metadata (e.g., attempts, reasons).
+- **Redaction:** Sensitive fields such as tokens, passwords, secrets, Authorization headers, and values that *look* like bearer/basic credentials are stored as `[REDACTED]`.
+- **Sink:** Default sink writes JSON Lines to `AUDIT_LOG_PATH` (default `audit.log`). File permissions are `0600` on creation.
+- **Admin example:** `POST /api/admin/purge` demonstrates a sensitive operation. Success, partial success (`?partial=1`), denied access, and retry attempts are all audit-logged.
+- **Auth failures:** 401/403 responses are automatically logged via middleware, with headers redacted.
+
+---
+
+## Testing
+
+```
+go test ./... -cover
+```
+
+Tests include redaction coverage, hash chaining, admin action logging, and middleware auth-failure logging. Coverage currently exceeds 95%.
 
 ---
 

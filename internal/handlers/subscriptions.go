@@ -7,12 +7,12 @@ import (
 )
 
 type Subscription struct {
-	ID        string `json:"id"`
-	PlanID    string `json:"plan_id"`
-	Customer  string `json:"customer"`
-	Status    string `json:"status"`
-	Amount    string `json:"amount"`
-	Interval  string `json:"interval"`
+	ID          string `json:"id"`
+	PlanID      string `json:"plan_id"`
+	Customer    string `json:"customer"`
+	Status      string `json:"status"`
+	Amount      string `json:"amount"`
+	Interval    string `json:"interval"`
 	NextBilling string `json:"next_billing,omitempty"`
 }
 
