@@ -1,16 +1,30 @@
 package routes
 
 import (
+	"os"
+
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/auth"
 	"stellarbill-backend/internal/config"
 	"stellarbill-backend/internal/handlers"
+	"stellarbill-backend/internal/middleware"
+	"stellarbill-backend/internal/repository"
+	"stellarbill-backend/internal/service"
 )
 
 func Register(r *gin.Engine) {
 	cfg := config.Load()
 
 	r.Use(corsMiddleware())
+
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "dev-secret"
+	}
+
+	subRepo := repository.NewMockSubscriptionRepo()
+	planRepo := repository.NewMockPlanRepo()
+	svc := service.NewSubscriptionService(subRepo, planRepo)
 
 	api := r.Group("/api")
 	{
@@ -28,6 +42,7 @@ func Register(r *gin.Engine) {
 			authenticated.GET("/subscriptions", auth.AuthzMiddleware(auth.RoleAdmin, auth.RoleMerchant), handlers.ListSubscriptions)
 			authenticated.GET("/subscriptions/:id", auth.AuthzMiddleware(auth.RoleAdmin, auth.RoleMerchant), handlers.GetSubscription)
 		}
+
 	}
 }
 
