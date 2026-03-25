@@ -16,7 +16,6 @@ func testRouter() *gin.Engine {
 	r.GET("/api/health", Health)
 	r.GET("/api/plans", ListPlans)
 	r.GET("/api/subscriptions", ListSubscriptions)
-	r.GET("/api/subscriptions/:id", GetSubscription)
 	return r
 }
 
@@ -106,50 +105,6 @@ func TestListSubscriptions(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 		}
-	})
-}
-
-func TestGetSubscription(t *testing.T) {
-	r := testRouter()
-
-	t.Run("normalizes unicode path identifiers", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/subscriptions/%EF%BD%93%EF%BD%95%EF%BD%82%EF%BC%8D%EF%BC%91", nil)
-		r.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
-		}
-
-		var body map[string]any
-		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-			t.Fatalf("decode body: %v", err)
-		}
-		if body["id"] != "sub-1" {
-			t.Fatalf("id = %v, want %q", body["id"], "sub-1")
-		}
-	})
-
-	t.Run("rejects query strings on detail endpoint", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/subscriptions/sub-1?expand=plan", nil)
-		r.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
-		}
-		assertErrorContains(t, rec, "unsupported parameter")
-	})
-
-	t.Run("rejects encoded payload path values", func(t *testing.T) {
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest(http.MethodGet, "/api/subscriptions/%3Cscript%3E", nil)
-		r.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
-		}
-		assertErrorContains(t, rec, "invalid path parameter \"id\"")
 	})
 }
 

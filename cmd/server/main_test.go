@@ -2,19 +2,14 @@ package main
 
 import (
 	"errors"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
-)
 
-func TestServerAddr(t *testing.T) {
-	if got := serverAddr("8080", ""); got != ":8080" {
-		t.Fatalf("serverAddr = %q, want %q", got, ":8080")
-	}
-	if got := serverAddr("8080", "9090"); got != ":9090" {
-		t.Fatalf("serverAddr = %q, want %q", got, ":9090")
-	}
-}
+	"stellarbill-backend/internal/config"
+)
 
 func TestConfigureGinMode(t *testing.T) {
 	configureGinMode("production")
@@ -26,41 +21,78 @@ func TestConfigureGinMode(t *testing.T) {
 	if gin.Mode() != gin.DebugMode {
 		t.Fatalf("gin.Mode = %q, want %q", gin.Mode(), gin.DebugMode)
 	}
+
+	configureGinMode("staging")
+	if gin.Mode() != gin.TestMode {
+		t.Fatalf("gin.Mode = %q, want %q", gin.Mode(), gin.TestMode)
+	}
 }
 
 func TestNewRouterRegistersExpectedRoutes(t *testing.T) {
 	router := newRouter()
-	routes := router.Routes()
-
-	if len(routes) == 0 {
+	if len(router.Routes()) == 0 {
 		t.Fatal("expected router to register routes")
 	}
 }
 
-func TestRunUsesConfiguredPort(t *testing.T) {
-	t.Setenv("ENV", "production")
-	t.Setenv("PORT", "9191")
+func TestNewServerUsesConfiguredSettings(t *testing.T) {
+	cfg := config.Config{
+		Env:            "development",
+		Port:           9191,
+		MaxHeaderBytes: 2048,
+		ReadTimeout:    10,
+		WriteTimeout:   20,
+		IdleTimeout:    30,
+	}
 
-	previous := runServer
-	defer func() { runServer = previous }()
+	srv := newServer(cfg)
+
+	if srv.Addr != ":9191" {
+		t.Fatalf("Addr = %q, want %q", srv.Addr, ":9191")
+	}
+	if srv.MaxHeaderBytes != 2048 {
+		t.Fatalf("MaxHeaderBytes = %d, want 2048", srv.MaxHeaderBytes)
+	}
+	if srv.ReadTimeout != 10*time.Second {
+		t.Fatalf("ReadTimeout = %v, want %v", srv.ReadTimeout, 10*time.Second)
+	}
+	if srv.WriteTimeout != 20*time.Second {
+		t.Fatalf("WriteTimeout = %v, want %v", srv.WriteTimeout, 20*time.Second)
+	}
+	if srv.IdleTimeout != 30*time.Second {
+		t.Fatalf("IdleTimeout = %v, want %v", srv.IdleTimeout, 30*time.Second)
+	}
+}
+
+func TestRunUsesConfiguredServer(t *testing.T) {
+	previous := listenAndServe
+	defer func() { listenAndServe = previous }()
 
 	called := false
-	runServer = func(router *gin.Engine, addr string) error {
+	listenAndServe = func(srv *http.Server) error {
 		called = true
-		if addr != ":9191" {
-			t.Fatalf("addr = %q, want %q", addr, ":9191")
+		if srv.Addr != ":9191" {
+			t.Fatalf("Addr = %q, want %q", srv.Addr, ":9191")
 		}
-		if router == nil {
-			t.Fatal("expected router to be initialized")
+		if srv.Handler == nil {
+			t.Fatal("expected server handler to be initialized")
 		}
 		return nil
 	}
 
-	if err := run(); err != nil {
+	err := run(config.Config{
+		Env:            "production",
+		Port:           9191,
+		MaxHeaderBytes: 1024,
+		ReadTimeout:    10,
+		WriteTimeout:   10,
+		IdleTimeout:    10,
+	})
+	if err != nil {
 		t.Fatalf("run returned error: %v", err)
 	}
 	if !called {
-		t.Fatal("expected runServer to be called")
+		t.Fatal("expected listenAndServe to be called")
 	}
 	if gin.Mode() != gin.ReleaseMode {
 		t.Fatalf("gin.Mode = %q, want %q", gin.Mode(), gin.ReleaseMode)
@@ -68,18 +100,23 @@ func TestRunUsesConfiguredPort(t *testing.T) {
 }
 
 func TestRunPropagatesServerError(t *testing.T) {
-	t.Setenv("ENV", "development")
-	t.Setenv("PORT", "8080")
-
-	previous := runServer
-	defer func() { runServer = previous }()
+	previous := listenAndServe
+	defer func() { listenAndServe = previous }()
 
 	wantErr := errors.New("listen failed")
-	runServer = func(_ *gin.Engine, _ string) error {
+	listenAndServe = func(_ *http.Server) error {
 		return wantErr
 	}
 
-	if err := run(); !errors.Is(err, wantErr) {
+	err := run(config.Config{
+		Env:            "development",
+		Port:           8080,
+		MaxHeaderBytes: 1024,
+		ReadTimeout:    10,
+		WriteTimeout:   10,
+		IdleTimeout:    10,
+	})
+	if !errors.Is(err, wantErr) {
 		t.Fatalf("run error = %v, want %v", err, wantErr)
 	}
 }

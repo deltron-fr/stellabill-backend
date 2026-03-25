@@ -4,7 +4,9 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+
 	"stellarbill-backend/internal/requestparams"
+	"stellarbill-backend/internal/service"
 )
 
 type Subscription struct {
@@ -38,26 +40,54 @@ func ListSubscriptions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 }
 
-func GetSubscription(c *gin.Context) {
-	if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+// NewGetSubscriptionHandler returns a gin.HandlerFunc that retrieves a full
+// subscription detail using the provided SubscriptionService.
+func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		callerID, exists := c.Get("callerID")
+		if !exists {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
 
-	id, err := requestparams.NormalizePathID("id", c.Param("id"))
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+		if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 
-	// TODO: load from DB by id
-	c.JSON(http.StatusOK, gin.H{
-		"id":           id,
-		"plan_id":      "plan_placeholder",
-		"customer":     "customer_placeholder",
-		"status":       "placeholder",
-		"amount":       "0",
-		"interval":     "monthly",
-		"next_billing": "2026-04-01T00:00:00Z",
-	})
+		id, err := requestparams.NormalizePathID("id", c.Param("id"))
+		if err != nil {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		detail, warnings, err := svc.GetDetail(c.Request.Context(), callerID.(string), id)
+		if err != nil {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			switch err {
+			case service.ErrNotFound:
+				c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
+			case service.ErrDeleted:
+				c.JSON(http.StatusGone, gin.H{"error": "subscription has been deleted"})
+			case service.ErrForbidden:
+				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
+			case service.ErrBillingParse:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
+			}
+			return
+		}
+
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		envelope := service.ResponseEnvelope{
+			APIVersion: "1",
+			Data:       detail,
+			Warnings:   warnings,
+		}
+		c.JSON(http.StatusOK, envelope)
+	}
 }
