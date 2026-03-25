@@ -12,6 +12,7 @@ import (
 
 func Register(r *gin.Engine) {
 	r.Use(corsMiddleware())
+	r.Use(middleware.TraceIDMiddleware())
 
 	jwtSecret := os.Getenv("JWT_SECRET")
 	if jwtSecret == "" {

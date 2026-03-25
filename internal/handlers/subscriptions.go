@@ -33,35 +33,25 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 		callerID, callerExists := c.Get("callerID")
 		tenantID, tenantExists := c.Get("tenantID")
 		if !callerExists || !tenantExists {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			RespondWithAuthError(c, "caller or tenant information missing from context")
 			return
 		}
 
 		// 2. Validate :id path param.
 		id := c.Param("id")
 		if strings.TrimSpace(id) == "" {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "subscription id required"})
+			RespondWithValidationError(c, "subscription id is required", map[string]interface{}{
+				"field": "id",
+				"reason": "cannot be empty",
+			})
 			return
 		}
 
 		// 3. Call service with tenant scope.
 		detail, warnings, err := svc.GetDetail(c.Request.Context(), tenantID.(string), callerID.(string), id)
 		if err != nil {
-			c.Header("Content-Type", "application/json; charset=utf-8")
-			switch err {
-			case service.ErrNotFound:
-				c.JSON(http.StatusNotFound, gin.H{"error": "subscription not found"})
-			case service.ErrDeleted:
-				c.JSON(http.StatusGone, gin.H{"error": "subscription has been deleted"})
-			case service.ErrForbidden:
-				c.JSON(http.StatusForbidden, gin.H{"error": "forbidden"})
-			case service.ErrBillingParse:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
-			}
+			statusCode, errorCode, message := MapServiceErrorToResponse(err)
+			RespondWithError(c, statusCode, errorCode, message)
 			return
 		}
 
