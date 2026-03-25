@@ -8,9 +8,11 @@ Go (Gin) API backend for Stellabill — subscription and billing plans API. This
 
 - [Tech stack](#tech-stack)
 - [What this backend provides (for the frontend)](#what-this-backend-provides-for-the-frontend)
+- [Background Worker](#background-worker)
 - [Local setup](#local-setup)
 - [Configuration](#configuration)
 - [API reference](#api-reference)
+- [Database migrations](#database-migrations)
 - [Contributing (open source)](#contributing-open-source)
 - [Project layout](#project-layout)
 - [License](#license)
@@ -34,6 +36,44 @@ This service is the **backend only**. A separate frontend (or any client) can:
 - **Subscriptions** — `GET /api/subscriptions` to list subscriptions and `GET /api/subscriptions/:id` to fetch one. Responses include plan_id, customer, status, amount, interval, next_billing. Currently placeholder/mock data; DB integration is planned.
 
 CORS is enabled for all origins in development so a frontend on another port or domain can call these endpoints.
+
+---
+
+## Background Worker
+
+The backend includes a production-ready background worker system for automated billing job scheduling and execution.
+
+### Key Features
+
+- **Job Scheduling**: Schedule billing operations (charges, invoices, reminders) with configurable execution times
+- **Distributed Locking**: Prevents duplicate processing when running multiple worker instances
+- **Retry Policy**: Automatic retry with exponential backoff (1s, 4s, 9s) for failed jobs
+- **Dead-Letter Queue**: Failed jobs after max attempts are moved for manual review
+- **Graceful Shutdown**: Workers complete in-flight jobs before shutting down
+- **Metrics Tracking**: Monitor job processing statistics (processed, succeeded, failed, dead-lettered)
+- **Concurrent Workers**: Multiple workers can run safely without duplicate processing
+
+### Documentation
+
+- `internal/worker/README.md` - Complete worker documentation
+- `internal/worker/INTEGRATION.md` - Integration guide with examples
+- `internal/worker/SECURITY.md` - Security analysis and threat model
+- `WORKER_IMPLEMENTATION.md` - Implementation summary
+
+### Quick Example
+
+```go
+store := worker.NewMemoryStore()
+executor := worker.NewBillingExecutor()
+config := worker.DefaultConfig()
+
+w := worker.NewWorker(store, executor, config)
+w.Start()
+defer w.Stop()
+
+scheduler := worker.NewScheduler(store)
+job, _ := scheduler.ScheduleCharge("sub-123", time.Now(), 3)
+```
 
 ---
 
@@ -101,8 +141,70 @@ curl http://localhost:8080/api/health
 | `PORT`         | `8080`                                       | HTTP server port               |
 | `DATABASE_URL` | `postgres://localhost/stellarbill?sslmode=disable` | PostgreSQL connection string   |
 | `JWT_SECRET`   | `change-me-in-production`                     | Secret for JWT (change in prod)|
+| `FF_DEFAULT_ENABLED` | `false`                                | Default state for unknown flags |
+| `FF_LOG_DISABLED` | `true`                                  | Log when flags block requests  |
+| `FF_CONFIG_FILE` | `""`                                    | Path to feature flags config file |
+
+### Feature Flags Configuration
+
+Feature flags can be configured using environment variables in several ways:
+
+#### 1. Individual Flags (Recommended)
+Use the `FF_` prefix for individual flags:
+```bash
+# Enable/disable specific features
+FF_SUBSCRIPTIONS_ENABLED=true
+FF_PLANS_ENABLED=false
+FF_NEW_BILLING_FLOW=true
+FF_ADVANCED_ANALYTICS=false
+```
+
+#### 2. JSON Configuration
+Use the `FEATURE_FLAGS` environment variable for bulk configuration:
+```bash
+export FEATURE_FLAGS='{"subscriptions_enabled": true, "plans_enabled": true, "new_billing_flow": false}'
+```
+
+#### 3. Priority Order
+The system uses the following priority (highest to lowest):
+1. `FF_*` individual environment variables
+2. `FEATURE_FLAGS` JSON configuration
+3. Default flag values
+
+#### Available Feature Flags
+
+| Flag Name | Default | Description |
+|-----------|---------|-------------|
+| `subscriptions_enabled` | `true` | Enable subscription management endpoints |
+| `plans_enabled` | `true` | Enable billing plans endpoints |
+| `new_billing_flow` | `false` | Enable new billing flow feature |
+| `advanced_analytics` | `false` | Enable advanced analytics endpoints |
 
 In production, set these via your host’s environment or secrets manager; do not commit secrets.
+
+---
+
+## Using Feature Flags in Code
+
+```go
+import "stellarbill-backend/internal/middleware"
+import "stellarbill-backend/internal/featureflags"
+
+// Method 1: Middleware (recommended for endpoints)
+router.GET("/feature", middleware.FeatureFlag("my_feature"), handler)
+
+// Method 2: With default value
+router.GET("/feature", middleware.FeatureFlagWithDefault("my_feature", true), handler)
+
+// Method 3: Direct check in code
+if featureflags.IsEnabled("my_feature") {
+    // Feature code here
+}
+
+// Method 4: Multiple flags requirement
+router.GET("/feature", middleware.RequireAllFeatureFlags("flag1", "flag2"), handler)
+router.GET("/feature", middleware.RequireAnyFeatureFlags("flag1", "flag2"), handler)
+```
 
 ---
 
@@ -110,14 +212,37 @@ In production, set these via your host’s environment or secrets manager; do no
 
 Base URL (local): `http://localhost:8080`
 
-| Method | Path                     | Description              |
-|--------|--------------------------|--------------------------|
-| GET    | `/api/health`            | Health check             |
-| GET    | `/api/plans`             | List billing plans       |
-| GET    | `/api/subscriptions`     | List subscriptions       |
-| GET    | `/api/subscriptions/:id` | Get one subscription     |
+| Method | Path                     | Feature Flag Required | Description              |
+|--------|--------------------------|---------------------|--------------------------|
+| GET    | `/api/health`            | None                | Health check             |
+| GET    | `/api/plans`             | `plans_enabled` (default: true) | List billing plans       |
+| GET    | `/api/subscriptions`     | `subscriptions_enabled` (default: true) | List subscriptions       |
+| GET    | `/api/subscriptions/:id` | `subscriptions_enabled` (default: true) | Get one subscription     |
+| GET    | `/api/billing/new-flow`  | `new_billing_flow` (default: false) | New billing flow feature |
+| GET    | `/api/analytics/advanced` | `advanced_analytics` AND `subscriptions_enabled` | Advanced analytics |
 
 All JSON responses. CORS allowed for `*` origin with common methods and headers.
+
+**Feature Flag Responses**: When a feature flag blocks a request, the API returns:
+```json
+{
+  "error": "feature_unavailable",
+  "message": "This feature is currently unavailable",
+  "feature_flag": "flag_name"
+}
+```
+
+---
+
+## Database migrations
+
+Migrations live in `migrations/` and are applied with:
+
+```bash
+go run ./cmd/migrate up
+```
+
+See `docs/migrations.md` for conventions and a production runbook.
 
 ---
 
@@ -241,23 +366,66 @@ stellabill-backend/
 │       └── main.go          # Entry point, Gin router, server start
 ├── internal/
 │   ├── config/
-│   │   ├── config.go        # Loads ENV, PORT, DATABASE_URL, JWT_SECRET
-│   │   └── config_test.go
+│   │   └── config.go        # Loads ENV, PORT, DATABASE_URL, JWT_SECRET, feature flags
+│   ├── featureflags/
+│   │   ├── featureflags.go   # Feature flag management system
+│   │   └── featureflags_test.go # Unit tests for feature flags
+│   ├── middleware/
+│   │   ├── featureflags.go   # Feature flag middleware for endpoint gating
+│   │   └── featureflags_test.go # Middleware tests
 │   ├── handlers/
 │   │   ├── health.go        # GET /api/health
 │   │   ├── plans.go         # GET /api/plans
-│   │   ├── subscriptions.go # GET /api/subscriptions, /api/subscriptions/:id
-│   │   └── handlers_test.go
-│   └── routes/
-│       ├── routes.go        # Registers routes and CORS middleware
-│       └── routes_test.go
-├── scripts/
-│   └── check-coverage.sh    # Enforces minimum coverage threshold
+│   │   └── subscriptions.go # GET /api/subscriptions, /api/subscriptions/:id
+│   ├── routes/
+│       └── routes.go        # Registers routes and CORS middleware
+│   └── worker/
+│       ├── job.go           # Job model and JobStore interface
+│       ├── store_memory.go  # In-memory JobStore implementation
+│       ├── worker.go        # Background worker with scheduler loop
+│       ├── executor.go      # Billing job executor
+│       ├── scheduler.go     # Job scheduling utilities
+│       ├── *_test.go        # Comprehensive test suite (95%+ coverage)
+│       ├── README.md        # Worker documentation
+│       ├── SECURITY.md      # Security analysis and threat model
+│       └── INTEGRATION.md   # Integration guide with examples
 ├── go.mod
 ├── go.sum
 ├── .gitignore
-└── README.md
+├── README.md
+└── WORKER_IMPLEMENTATION.md # Implementation summary
 ```
+
+---
+
+## Security Considerations
+
+### Feature Flags Security
+
+- **Environment Variables**: Feature flags are configured via environment variables, which are secure and not committed to version control
+- **Default Behavior**: Unknown flags default to `false` for security (fail-safe)
+- **No Dynamic Loading**: Flags are loaded at startup only, preventing runtime injection attacks
+- **Thread Safety**: All flag operations are thread-safe with proper mutex locking
+- **Validation**: Invalid flag values are safely ignored and logged
+
+### Best Practices
+
+1. **Production Flags**: Always set explicit flag values in production; don't rely on defaults
+2. **Secret Management**: Use your cloud provider's secret manager for sensitive flag configurations
+3. **Monitoring**: Monitor flag usage and access patterns
+4. **Audit Trail**: Flag changes are tracked with timestamps for auditing
+5. **Testing**: Test both enabled and disabled states in your test suite
+
+### Testing Security
+
+The feature flag system includes comprehensive tests covering:
+- Concurrent access and race conditions
+- Invalid input handling
+- Memory leak prevention
+- Environment variable injection attempts
+- Edge cases and error conditions
+
+Run tests with: `go test ./...`
 
 ---
 

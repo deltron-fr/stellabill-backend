@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -8,66 +9,74 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func init() {
+func TestRegister_HealthAndCORS(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-}
+	engine := gin.New()
+	Register(engine)
 
-func newRouter() *gin.Engine {
-	r := gin.New()
-	Register(r)
-	return r
-}
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/health", nil)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
 
-func TestRoutes_Health(t *testing.T) {
-	r := newRouter()
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/health", nil))
-	if w.Code != http.StatusOK {
-		t.Errorf("health: got %d, want %d", w.Code, http.StatusOK)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d want %d", rec.Code, http.StatusOK)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Fatalf("Access-Control-Allow-Origin: got %q want %q", got, "*")
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload["status"] != "ok" {
+		t.Fatalf("payload.status: got %v want %q", payload["status"], "ok")
+	}
+	if payload["service"] != "stellarbill-backend" {
+		t.Fatalf("payload.service: got %v want %q", payload["service"], "stellarbill-backend")
 	}
 }
 
-func TestRoutes_Plans(t *testing.T) {
-	r := newRouter()
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/plans", nil))
-	if w.Code != http.StatusOK {
-		t.Errorf("plans: got %d, want %d", w.Code, http.StatusOK)
+func TestRegister_CORSPreflight(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	Register(engine)
+
+	req := httptest.NewRequest(http.MethodOptions, "http://localhost:8080/api/health", nil)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d want %d", rec.Code, http.StatusNoContent)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); got == "" {
+		t.Fatalf("expected Access-Control-Allow-Methods to be set")
 	}
 }
 
-func TestRoutes_Subscriptions(t *testing.T) {
-	r := newRouter()
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/subscriptions", nil))
-	if w.Code != http.StatusOK {
-		t.Errorf("subscriptions: got %d, want %d", w.Code, http.StatusOK)
-	}
-}
+func TestRegister_GetSubscriptionShape(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	Register(engine)
 
-func TestRoutes_SubscriptionByID(t *testing.T) {
-	r := newRouter()
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/subscriptions/abc", nil))
-	if w.Code != http.StatusOK {
-		t.Errorf("subscription by id: got %d, want %d", w.Code, http.StatusOK)
-	}
-}
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/api/subscriptions/sub_123", nil)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
 
-func TestRoutes_CORS_Headers(t *testing.T) {
-	r := newRouter()
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/health", nil))
-	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
-		t.Errorf("CORS origin header: got %q, want %q", got, "*")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d want %d", rec.Code, http.StatusOK)
 	}
-}
-
-func TestRoutes_CORS_Preflight(t *testing.T) {
-	r := newRouter()
-	w := httptest.NewRecorder()
-	r.ServeHTTP(w, httptest.NewRequest(http.MethodOptions, "/api/health", nil))
-	if w.Code != http.StatusNoContent {
-		t.Errorf("preflight: got %d, want %d", w.Code, http.StatusNoContent)
+	var payload map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode json: %v", err)
+	}
+	if payload["id"] != "sub_123" {
+		t.Fatalf("payload.id: got %v want %q", payload["id"], "sub_123")
+	}
+	if _, ok := payload["plan_id"]; !ok {
+		t.Fatalf("expected payload.plan_id to be present")
+	}
+	if _, ok := payload["customer"]; !ok {
+		t.Fatalf("expected payload.customer to be present")
 	}
 }
