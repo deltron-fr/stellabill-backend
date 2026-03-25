@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"stellabill-backend/internal/subscriptions"
+
 	"stellarbill-backend/internal/service"
 )
 
@@ -27,14 +29,37 @@ func (h *Handler) ListSubscriptions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"subscriptions": subscriptions})
 }
 
-func (h *Handler) GetSubscription(c *gin.Context) {
-	// 1. Read callerID from context (set by AuthMiddleware).
-	callerID, exists := c.Get("callerID")
-	if !exists {
-		c.Header("Content-Type", "application/json; charset=utf-8")
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-		return
-	}
+func GetSubscription(c *gin.Context) {
+	id := c.Param("id")
+	c.JSON(http.StatusOK, Subscription{
+		ID:       id,
+		PlanID:   "plan_placeholder",
+		Customer: "customer_placeholder",
+		Status:   "placeholder",
+		Amount:   "0",
+		Interval: "monthly",
+	})
+}
+
+// NewGetSubscriptionHandler returns a gin.HandlerFunc that retrieves a full
+// subscription detail using the provided SubscriptionService.
+func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 1. Read callerID from context (set by AuthMiddleware).
+		callerID, exists := c.Get("callerID")
+		if !exists {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+			return
+		}
+
+		// 2. Validate :id path param.
+		id := c.Param("id")
+		if strings.TrimSpace(id) == "" {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "subscription id required"})
+			return
+		}
 
 	// 2. Validate :id path param.
 	id := c.Param("id")
@@ -62,13 +87,39 @@ func (h *Handler) GetSubscription(c *gin.Context) {
 		}
 		return
 	}
+}
 
-	// 4. Set Content-Type and respond with envelope.
-	c.Header("Content-Type", "application/json; charset=utf-8")
-	envelope := service.ResponseEnvelope{
-		APIVersion: "1",
-		Data:       detail,
-		Warnings:   warnings,
+// UpdateSubscriptionStatus handles status updates with validation
+func UpdateSubscriptionStatus(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "subscription id required"})
+		return
 	}
-	c.JSON(http.StatusOK, envelope)
+
+	var payload struct {
+		Status string `json:"status" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// TODO: fetch current subscription from DB
+	currentStatus := "active" // placeholder
+
+	if err := subscriptions.CanTransition(currentStatus, payload.Status); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"error": err.Error(),
+		})
+		return
+	}
+
+	// TODO: persist update
+
+	c.JSON(http.StatusOK, gin.H{
+		"id":     id,
+		"status": payload.Status,
+	})
 }

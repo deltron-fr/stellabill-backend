@@ -58,7 +58,7 @@ func TestListSubscriptions_Success(t *testing.T) {
 
 func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
 	svc := &mockSubscriptionService{}
-	r := setupRouter(svc, false) // no callerID injected
+	r := setupRouter(svc, false)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1", nil)
@@ -81,11 +81,9 @@ func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
 		c.Set("callerID", "caller-123")
 		c.Next()
 	})
-	h := &Handler{Subscriptions: &mockSubscriptionService{}}
-	r.GET("/api/subscriptions/:id", h.GetSubscription)
+	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(&mockSubscriptionService{}))
 
 	w := httptest.NewRecorder()
-	// URL-encoded space (%20) passes Gin routing but fails TrimSpace check.
 	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%20", nil)
 	r.ServeHTTP(w, req)
 
