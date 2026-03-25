@@ -245,22 +245,17 @@ func isValidDatabaseURL(dbURL string) bool {
 	// Must have a valid scheme (postgres, postgresql, mysql, sqlite, etc.)
 	scheme := strings.ToLower(parsed.Scheme)
 	validSchemes := map[string]bool{
-		"postgres": true,
+		"postgres":  true,
 		"postgresql": true,
-		"mysql": true,
-		"sqlite": true,
-		"sqlite3": true,
-		"mongodb": true,
-		"redis": true,
+		"mysql":     true,
+		"sqlite":    true,
+		"sqlite3":   true,
+		"mongodb":   true,
+		"redis":     true,
 	}
 
-	if !validSchemes[scheme] && !strings.Contains(scheme, "sql") {
-		// Allow unknown schemes but warn - be permissive but validate structure
-	}
-
-	// Must have a host or be a valid file path (for sqlite)
-	if parsed.Host == "" && !strings.Contains(dbURL, ".db") && !strings.Contains(dbURL, ".sqlite") {
-		// Could be a local database
+	if !validSchemes[scheme] {
+		return false
 	}
 
 	return true

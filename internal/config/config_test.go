@@ -56,7 +56,7 @@ func TestLoad_WithMissingRequiredVars(t *testing.T) {
 func TestLoad_WithValidConfig(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()",
+		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 		"PORT":         "8080",
 		"ENV":          "development",
 	}, func() {
@@ -73,7 +73,7 @@ func TestLoad_WithValidConfig(t *testing.T) {
 			t.Errorf("Expected DBConn, got %s", cfg.DBConn)
 		}
 
-		if cfg.JWTSecret != "MySecureSecret123!@#$%^&*()" {
+		if cfg.JWTSecret != "MySecureSecret123!@#$%^&*()MoreCharsToReach32!" {
 			t.Errorf("Expected JWTSecret, got %s", cfg.JWTSecret)
 		}
 	})
@@ -82,7 +82,7 @@ func TestLoad_WithValidConfig(t *testing.T) {
 func TestLoad_WithInvalidPort(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()",
+		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 		"PORT":         "invalid",
 	}, func() {
 		_, err := Load()
@@ -113,7 +113,7 @@ func TestLoad_WithPortOutOfRange(t *testing.T) {
 	for _, tc := range testCases {
 		withEnvVars(t, map[string]string{
 			"DATABASE_URL": "postgres://user:pass@localhost/db",
-			"JWT_SECRET":   "MySecureSecret123!@#$%^&*()",
+			"JWT_SECRET":   "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 			"PORT":         tc.port,
 		}, func() {
 			_, err := Load()
@@ -130,7 +130,7 @@ func TestLoad_WithPortOutOfRange(t *testing.T) {
 func TestLoad_WithInvalidDatabaseURL(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "not-a-valid-url",
-		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()",
+		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 		"PORT":         "8080",
 	}, func() {
 		_, err := Load()
@@ -151,14 +151,11 @@ func TestLoad_WithWeakSecret(t *testing.T) {
 		shouldFail bool
 	}{
 		{"short", true},
-		{"onlylowercase", true},
-		{"ONLYUPPERCASE", true},
-		{"1234567890", true},
-		{"NoSpecialChars123", true},
-		{"NoDigits!@#$%", true},
-		{"Valid1Secret", false},
-		{"MySecureSecret123!@#$%^&*()", false},
-		{"AnotherValid1Secret", false},
+		{"onlylowercaseletters", true},
+		{"ONLYUPPERCASELETTERS", true},
+		{"12345678901234567890123456789012", true}, // 32 digits, missing letters/special
+		{"MySecureSecret123!@#$%^&*()MoreCharsToReach32!", false},
+		{"AnotherValid1SecretWithProperLengthForSecurity!", false},
 	}
 
 	for _, tc := range testCases {
@@ -181,7 +178,7 @@ func TestLoad_WithWeakSecret(t *testing.T) {
 func TestLoad_WithOptionalConfigs(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL":     "postgres://user:pass@localhost/db",
-		"JWT_SECRET":       "MySecureSecret123!@#$%^&*()",
+		"JWT_SECRET":       "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 		"PORT":             "3000",
 		"ENV":              "production",
 		"MAX_HEADER_BYTES": "2097152",
@@ -223,7 +220,7 @@ func TestLoad_WithOptionalConfigs(t *testing.T) {
 func TestLoad_WithInvalidOptionalConfigs(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL":     "postgres://user:pass@localhost/db",
-		"JWT_SECRET":       "MySecureSecret123!@#$%^&*()",
+		"JWT_SECRET":       "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 		"PORT":             "8080",
 		"MAX_HEADER_BYTES": "invalid",
 		"READ_TIMEOUT":     "invalid",
@@ -330,10 +327,10 @@ func TestIsValidSecret(t *testing.T) {
 		{"1234567890", false},
 		{"NoSpecialChars123", false},
 		{"NoDigits!@#$%", false},
-		{"Valid1Secret", true},
-		{"MySecureSecret123!@#$%^&*()", true},
-		{"AnotherValid1Secret", true},
-		{"Str0ng!Secr3t", true},
+		{"Valid1SecretWithEnoughLengthToPassValidation!", true},
+		{"MySecureSecret123!@#$%^&*()MoreCharsToReach32", true},
+		{"AnotherValid1SecretWithProperLengthForSecurity!", true},
+		{"Str0ng!Secr3tWithAdditionalCharsForValidation!", true},
 		{"aB1" + strings.Repeat("x", 29), true}, // exactly 32 chars with mixed types
 	}
 
@@ -352,7 +349,7 @@ func TestMaskPassword(t *testing.T) {
 	if strings.Contains(masked, "password") {
 		t.Errorf("Expected password to be masked, got: %s", masked)
 	}
-	if !strings.Contains(masked, "***") {
+	if !strings.Contains(masked, "%2A%2A%2A") {
 		t.Errorf("Expected mask pattern in result, got: %s", masked)
 	}
 }
@@ -403,7 +400,7 @@ func TestGetOptionalEnvVars(t *testing.T) {
 func TestLoad_DefaultPort(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()",
+		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 		"PORT":         "",
 	}, func() {
 		cfg, err := Load()
@@ -420,7 +417,7 @@ func TestLoad_DefaultPort(t *testing.T) {
 func TestLoad_ProductionMode(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()",
+		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 		"PORT":         "8080",
 		"ENV":          "production",
 	}, func() {
@@ -438,7 +435,7 @@ func TestLoad_ProductionMode(t *testing.T) {
 func TestConfig_Validate(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()",
+		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 		"PORT":         "8080",
 	}, func() {
 		cfg := Config{}
@@ -491,7 +488,7 @@ func TestConfig_ValidateWithInvalidPort(t *testing.T) {
 func TestConfig_ValidateWithInvalidURL(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "invalid-url",
-		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()",
+		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 		"PORT":         "8080",
 	}, func() {
 		cfg := Config{}
@@ -543,7 +540,7 @@ func TestLoad_WithAllValidSchemes(t *testing.T) {
 	for _, scheme := range schemes {
 		withEnvVars(t, map[string]string{
 			"DATABASE_URL": scheme,
-			"JWT_SECRET":   "MySecureSecret123!@#$%^&*()",
+			"JWT_SECRET":   "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 			"PORT":         "8080",
 		}, func() {
 			_, err := Load()
@@ -557,7 +554,7 @@ func TestLoad_WithAllValidSchemes(t *testing.T) {
 func TestLoad_WithZeroTimeout(t *testing.T) {
 	withEnvVars(t, map[string]string{
 		"DATABASE_URL": "postgres://user:pass@localhost/db",
-		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()",
+		"JWT_SECRET":   "MySecureSecret123!@#$%^&*()MoreCharsToReach32!",
 		"PORT":         "8080",
 		"READ_TIMEOUT": "0",
 	}, func() {

@@ -9,6 +9,18 @@ import (
 	"stellarbill-backend/internal/worker"
 )
 
+// MockExecutor for example
+type MockExecutor struct {
+	execFunc func(ctx context.Context, job *worker.Job) error
+}
+
+func (m *MockExecutor) Execute(ctx context.Context, job *worker.Job) error {
+	if m.execFunc != nil {
+		return m.execFunc(ctx, job)
+	}
+	return nil
+}
+
 // Example demonstrates basic worker usage
 func Example_basicUsage() {
 	// Create store and executor
@@ -85,16 +97,16 @@ func Example_concurrentWorkers() {
 
 // Example demonstrates custom executor
 func Example_customExecutor() {
-	type CustomExecutor struct{}
-
-	func (e *CustomExecutor) Execute(ctx context.Context, job *worker.Job) error {
-		log.Printf("Custom execution for job %s", job.ID)
-		// Custom billing logic here
-		return nil
+	// Create executor with custom logic
+	executor := &MockExecutor{
+		execFunc: func(ctx context.Context, job *worker.Job) error {
+			log.Printf("Custom execution for job %s", job.ID)
+			// Custom billing logic here
+			return nil
+		},
 	}
 
 	store := worker.NewMemoryStore()
-	executor := &CustomExecutor{}
 	config := worker.DefaultConfig()
 
 	w := worker.NewWorker(store, executor, config)
