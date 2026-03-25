@@ -91,3 +91,16 @@ func main() {
 		log.Fatalf("Failed to start server: %v", err)
 	}
 }
+
+func newRouter() *gin.Engine {
+	router := gin.New()
+	router.Use(
+		middleware.Recovery(log.Default()),
+		middleware.RequestID(),
+		middleware.Logging(log.Default()),
+		middleware.CORS("*"),
+		middleware.RateLimit(middleware.NewRateLimiter(60, time.Minute)),
+	)
+	routes.Register(router)
+	return router
+}

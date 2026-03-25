@@ -290,6 +290,41 @@ go tool cover -html=coverage.out
 
 ---
 
+## Middleware order
+
+Recommended order for the HTTP chain:
+
+1. `recovery`
+2. `request-id`
+3. `logging`
+4. `cors`
+5. `rate-limit`
+6. `auth` for protected routes only
+
+Why this order:
+
+- `recovery` wraps the full chain so panics from downstream middleware and handlers are converted into structured `500` responses.
+- `request-id` runs early so every response and log line can carry the same correlation ID.
+- `logging` runs before short-circuiting middleware so failed auth, rate-limit, and panic-recovery responses are still logged.
+- `cors` handles preflight `OPTIONS` requests before rate limiting or auth rejects them.
+- `rate-limit` runs before `auth` on protected routes to reduce brute-force pressure on authentication logic.
+- `auth` should be attached only to protected groups so public endpoints like `/api/health` can remain reachable.
+
+Behavior verified by tests:
+
+- Middleware entry and unwind order.
+- Request ID propagation across middleware and handlers.
+- Expected short-circuit responses for preflight, auth failures, rate limiting, and panic recovery.
+
+Security notes:
+
+- `X-Request-ID` input is sanitized before reuse in logs and responses.
+- The in-memory rate limiter is process-local and keyed by client IP, so deployments behind proxies should ensure trusted forwarding headers are configured correctly.
+- CORS is currently configured as `*`; production deployments should replace that with an explicit frontend origin.
+- The sample auth middleware validates a bearer token against the configured secret and is intended as a lightweight guard for protected groups until full JWT validation is introduced.
+
+---
+
 ## Contributing (open source)
 
 We welcome contributions from the community. Below is a short guide to get you from “first look” to “merged change”.
