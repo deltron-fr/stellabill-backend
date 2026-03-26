@@ -3,60 +3,63 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"time"
 
+	"database/sql"
+
 	"github.com/gin-gonic/gin"
+	"stellarbill-backend/internal/audit"
 	"stellarbill-backend/internal/config"
+	"stellarbill-backend/internal/handlers"
 	"stellarbill-backend/internal/routes"
 	"stellarbill-backend/internal/shutdown"
 )
 
+var listenAndServe = func(srv *http.Server) error {
+	return srv.ListenAndServe()
+}
+
 func main() {
-	// Load configuration with strict validation
 	cfg, err := config.Load()
 	if err != nil {
-		// Fail fast with descriptive error
-		fmt.Fprintf(os.Stderr, "ERROR: Configuration validation failed: %s\n", err.Error())
-		fmt.Fprintln(os.Stderr, "\nRequired environment variables:")
-		for _, key := range config.GetRequiredEnvVars() {
-			fmt.Fprintf(os.Stderr, "  - %s\n", key)
-		}
-		fmt.Fprintln(os.Stderr, "\nOptional environment variables and defaults:")
-		for key, val := range config.GetOptionalEnvVars() {
-			fmt.Fprintf(os.Stderr, "  - %s (default: %s)\n", key, val)
-		}
+		printConfigError(err)
 		os.Exit(1)
 	}
 
-	// Log warnings if any
-	if vResult := cfg.Validate(); len(vResult.Warnings) > 0 {
-		log.Printf("WARNING: Configuration warnings:")
-		for _, w := range vResult.Warnings {
-			log.Printf("  - %s", w)
-		}
-	}
-
-	// Set Gin mode based on environment
+	// Init PII-safe logger
+	var logger *zap.Logger
 	if cfg.Env == "production" {
+		logger = security.ProductionLogger()
+		defer logger.Sync()
 		gin.SetMode(gin.ReleaseMode)
-		log.Println("Running in production mode")
+		logger.Info("Running in production mode")
 	} else if cfg.Env == "development" {
+		logger = security.DevLogger()
+		defer logger.Sync()
 		gin.SetMode(gin.DebugMode)
-		log.Println("Running in development mode")
+		logger.Info("Running in development mode")
 	} else {
+		logger = security.ProductionLogger()
+		defer logger.Sync()
 		gin.SetMode(gin.TestMode)
-		log.Printf("Running in %s mode", cfg.Env)
+		logger.Info("Running in test mode", zap.String("env", cfg.Env))
+	}
+}
+
+	// Log config warnings
+	if vResult := cfg.Validate(); len(vResult.Warnings) > 0 {
+		logger.Warn("Configuration warnings",
+			zap.Strings("warnings", vResult.Warnings))
 	}
 
-	// Create router with configured timeouts
+	// Create router with configured middleware
 	router := gin.New()
 	router.Use(gin.Recovery())
-	router.Use(gin.Logger())
+	router.Use(middleware.Logger(logger))
 
-	// Set timeouts from configuration
+	// Security headers middleware
 	router.Use(func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
@@ -64,8 +67,11 @@ func main() {
 		c.Next()
 	})
 
-	// Register routes
-	routes.Register(router)
+	// Wire up services and handlers, then register routes
+	planSvc := services.NewPlanService()
+	subSvc := services.NewSubscriptionService()
+	h := handlers.NewHandler(planSvc, subSvc)
+	routes.Register(router, h)
 
 	// Build server address
 	addr := fmt.Sprintf(":%d", cfg.Port)
@@ -79,9 +85,13 @@ func main() {
 		IdleTimeout:  time.Duration(cfg.IdleTimeout) * time.Second,
 	}
 
-	log.Printf("Starting Stellarbill backend on %s (env: %s)", addr, cfg.Env)
-	log.Printf("Server timeouts - Read: %ds, Write: %ds, Idle: %ds", 
-		cfg.ReadTimeout, cfg.WriteTimeout, cfg.IdleTimeout)
+	logger.Info("Starting Stellarbill backend",
+		zap.String("addr", addr),
+		zap.String("env", cfg.Env))
+	logger.Info("Server timeouts",
+		zap.Int("read", cfg.ReadTimeout),
+		zap.Int("write", cfg.WriteTimeout),
+		zap.Int("idle", cfg.IdleTimeout))
 
 	// Initialize graceful shutdown orchestrator
 	// Shutdown timeout: 30 seconds (total time for all cleanup)
@@ -127,4 +137,31 @@ func main() {
 	}():
 		log.Println("Server shutdown completed successfully")
 	}
+
+	logger.Init()
+
+	r := gin.New()
+
+	r.Use(middleware.RecoveryLogger())
+	r.Use(middleware.RequestLogger())
+
+	var db *sql.DB = nil // existing or future DB
+
+	routes.RegisterRoutes(r, db)
+
+	r.Run()
 }
+
+func newRouter() *gin.Engine {
+	router := gin.New()
+	router.Use(
+		middleware.Recovery(log.Default()),
+		middleware.RequestID(),
+		middleware.Logging(log.Default()),
+		middleware.CORS("*"),
+		middleware.RateLimit(middleware.NewRateLimiter(60, time.Minute)),
+	)
+	routes.Register(router)
+	return router
+}
+
