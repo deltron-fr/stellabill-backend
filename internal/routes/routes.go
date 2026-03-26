@@ -30,10 +30,10 @@ func Register(r *gin.Engine) {
 	subRepo := repository.NewMockSubscriptionRepo()
 	planRepo := repository.NewMockPlanRepo()
 	svc := service.NewSubscriptionService(subRepo, planRepo)
+	// wire planRepo into handlers for list/detail endpoints and optional caching
+	handlers.SetPlanRepository(planRepo)
 
-	stmtRepo := repository.NewMockStatementRepo()
-	stmtSvc := service.NewStatementService(subRepo, stmtRepo)
-
+	// Define the API version/group
 	api := r.Group("/api")
 	api.Use(idempotency.Middleware(store))
 	{

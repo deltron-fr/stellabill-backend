@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-
 	"github.com/gin-gonic/gin"
 	"stellarbill-backend/internal/service"
 )
@@ -16,9 +15,13 @@ type mockSubscriptionService struct {
 	detail   *service.SubscriptionDetail
 	warnings []string
 	err      error
+	callerID string
+	id       string
 }
 
-func (m *mockSubscriptionService) GetDetail(_ context.Context, _, _ string) (*service.SubscriptionDetail, []string, error) {
+func (m *mockSubscriptionService) GetDetail(_ context.Context, callerID, id string) (*service.SubscriptionDetail, []string, error) {
+	m.callerID = callerID
+	m.id = id
 	return m.detail, m.warnings, m.err
 }
 
@@ -34,6 +37,7 @@ func setupRouter(svc *mockSubscriptionService, setCallerID bool) *gin.Engine {
 	if setCallerID {
 		r.Use(func(c *gin.Context) {
 			c.Set("callerID", "caller-123")
+			c.Set("tenantID", "tenant-1")
 			c.Next()
 		})
 	}
@@ -67,10 +71,13 @@ func TestGetSubscription_MissingCallerID_Returns401(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] == "" {
-		t.Error("expected error field in response body")
+	if body.Code != string(ErrorCodeUnauthorized) {
+		t.Errorf("expected error code %s, got %s", ErrorCodeUnauthorized, body.Code)
+	}
+	if body.Message == "" {
+		t.Error("expected error message in response body")
 	}
 }
 
@@ -78,7 +85,9 @@ func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
+		c.Set("traceID", "test-trace")
 		c.Set("callerID", "caller-123")
+		c.Set("tenantID", "tenant-1")
 		c.Next()
 	})
 	r.GET("/api/subscriptions/:id", NewGetSubscriptionHandler(&mockSubscriptionService{}))
@@ -90,10 +99,69 @@ func TestGetSubscription_EmptyID_Returns400(t *testing.T) {
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] == "" {
-		t.Error("expected error field in response body")
+	if body.Code != string(ErrorCodeValidationFailed) {
+		t.Errorf("expected validation error code, got %s", body.Code)
+	}
+}
+
+func TestGetSubscription_RejectsUnexpectedQueryParams_Returns400(t *testing.T) {
+	svc := &mockSubscriptionService{}
+	r := setupRouter(svc, true)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/sub-1?expand=plan", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	if svc.id != "" {
+		t.Fatalf("service should not be called, got id %q", svc.id)
+	}
+}
+
+func TestGetSubscription_RejectsEncodedPayloadID_Returns400(t *testing.T) {
+	svc := &mockSubscriptionService{}
+	r := setupRouter(svc, true)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%3Cscript%3E", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+	if svc.id != "" {
+		t.Fatalf("service should not be called, got id %q", svc.id)
+	}
+}
+
+func TestGetSubscription_NormalizesUnicodeID_BeforeServiceCall(t *testing.T) {
+	svc := &mockSubscriptionService{
+		detail: &service.SubscriptionDetail{
+			ID:       "sub-1",
+			PlanID:   "plan-1",
+			Customer: "caller-123",
+			Status:   "active",
+			Interval: "monthly",
+		},
+	}
+	r := setupRouter(svc, true)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/subscriptions/%EF%BD%93%EF%BD%95%EF%BD%82%EF%BC%8D%EF%BC%91", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+	if svc.id != "sub-1" {
+		t.Fatalf("expected normalized id sub-1, got %q", svc.id)
+	}
+	if svc.callerID != "caller-123" {
+		t.Fatalf("expected callerID caller-123, got %q", svc.callerID)
 	}
 }
 
@@ -108,10 +176,10 @@ func TestGetSubscription_ErrNotFound_Returns404(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] == "" {
-		t.Error("expected error field in response body")
+	if body.Code != string(ErrorCodeNotFound) {
+		t.Errorf("expected error code %s, got %s", ErrorCodeNotFound, body.Code)
 	}
 }
 
@@ -126,10 +194,10 @@ func TestGetSubscription_ErrDeleted_Returns410(t *testing.T) {
 	if w.Code != http.StatusGone {
 		t.Fatalf("expected 410, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] != "subscription has been deleted" {
-		t.Errorf("unexpected error message: %q", body["error"])
+	if body.Code != string(ErrorCodeNotFound) {
+		t.Errorf("expected error code %s, got %s", ErrorCodeNotFound, body.Code)
 	}
 }
 
@@ -144,10 +212,10 @@ func TestGetSubscription_ErrForbidden_Returns403(t *testing.T) {
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] == "" {
-		t.Error("expected error field in response body")
+	if body.Code != string(ErrorCodeForbidden) {
+		t.Errorf("expected error code %s, got %s", ErrorCodeForbidden, body.Code)
 	}
 }
 
@@ -162,10 +230,10 @@ func TestGetSubscription_ErrBillingParse_Returns500(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
 	}
-	var body map[string]string
+	var body ErrorEnvelope
 	json.NewDecoder(w.Body).Decode(&body)
-	if body["error"] == "" {
-		t.Error("expected error field in response body")
+	if body.Code != string(ErrorCodeInternalError) {
+		t.Errorf("expected internal error code, got %s", body.Code)
 	}
 }
 

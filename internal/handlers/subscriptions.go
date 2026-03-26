@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 	"stellabill-backend/internal/subscriptions"
 
+	"stellarbill-backend/internal/requestparams"
 	"stellarbill-backend/internal/service"
 )
 
@@ -47,7 +47,6 @@ func (h *Handler) GetSubscription(c *gin.Context) {
 // subscription detail using the provided SubscriptionService.
 func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. Read callerID from context (set by AuthMiddleware).
 		callerID, exists := c.Get("callerID")
 		if !exists {
 			c.Header("Content-Type", "application/json; charset=utf-8")
@@ -55,11 +54,16 @@ func NewGetSubscriptionHandler(svc service.SubscriptionService) gin.HandlerFunc 
 			return
 		}
 
-		// 2. Validate :id path param.
-		id := c.Param("id")
-		if strings.TrimSpace(id) == "" {
+		if _, err := requestparams.SanitizeQuery(c.Request.URL.Query(), requestparams.QueryRules{}); err != nil {
 			c.Header("Content-Type", "application/json; charset=utf-8")
-			c.JSON(http.StatusBadRequest, gin.H{"error": "subscription id required"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		id, err := requestparams.NormalizePathID("id", c.Param("id"))
+		if err != nil {
+			c.Header("Content-Type", "application/json; charset=utf-8")
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
 
